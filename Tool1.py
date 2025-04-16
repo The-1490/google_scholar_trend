@@ -4,79 +4,153 @@ import datetime
 import re
 import sys
 import time
-import random
 import os
 
 import matplotlib.pyplot as plt
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup  # Import BeautifulSoup
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("keywords", type=str, help="Keywords to search", nargs="+")
-    parser.add_argument("--since", type=int, help="Starting year", default=2020)
-    parser.add_argument("--to", type=int, help="Ending year", default=datetime.datetime.now().year)
-    parser.add_argument("--plot", help="Plot the result", action="store_true")
-    parser.add_argument("--csv", type=str, help="Filename of CSV output result", metavar="filename", default="Tungsten.csv")
+    parser = argparse.ArgumentParser(description="Scrape Google Scholar results for keyword trends.")
+    parser.add_argument("keywords", type=str, nargs="+", help="Keywords to search")
+    parser.add_argument("--since", type=int, default=2020, help="Starting year")
+    parser.add_argument("--to", type=int, default=datetime.datetime.now().year, help="Ending year")
+    parser.add_argument("--plot", action="store_true", help="Plot the results")
+    parser.add_argument("--csv", type=str, default="Tungsten.csv", metavar="filename", help="Filename for CSV output")
+    parser.add_argument("--output_dir", type=str, default="D:\\Server\\Scholar trends", help="Directory to save output files")
+    parser.add_argument("--filter", type=str, default="AND", choices=["AND", "OR"], help="Filter type for multiple keywords (AND or OR)")
     return parser.parse_args()
+
+
+def fetch_scholar_results(driver, keywords, year):
+    """Fetches and parses Google Scholar results for a given year using BeautifulSoup.
+    Also extracts author and publication year.
+    """
+    base_url = f"https://scholar.google.ca/scholar?q={keywords}&as_ylo={year}&as_yhi={year}"
+    try:
+        driver.get(base_url)
+        # Wait for the results to load (adjust timeout and element as needed)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "gs_top"))  # Or a more specific result element
+        )
+        page_content = driver.page_source
+        soup = BeautifulSoup(page_content, 'html.parser')  # Create BeautifulSoup object
+
+        # Find the element containing the results count
+        result_div = soup.find('div', {'id': 'gs_ab_md'})  # Adjust based on Google Scholar's HTML structure
+        total_results = 0  # Initialize total_results
+        if result_div:
+            result_text = result_div.text
+            reg = re.compile(r".*About ([\d,]+) results.*")
+            match = reg.match(result_text)
+
+            if match:
+                total_results = int(match.group(1).replace(",", ""))
+                print(f"{year}: {total_results} total results")
+            else:
+                print(f"Error parsing total results for {year}", file=sys.stderr)
+
+        else:
+            print(f"Could not find total results div for {year}", file=sys.stderr)
+
+        # Extract author and publication year for each result
+        results_data = []
+        result_blocks = soup.find_all('div', class_='gs_r')  # Each result is in a gs_r div
+        for block in result_blocks:
+            author_year = ""
+            author_year_span = block.find('div', class_='gs_a')  # gs_a contains author and year
+            if author_year_span:
+                author_year = author_year_span.text
+            results_data.append(author_year)
+
+        return total_results, results_data  # Return both total results and extracted data
+
+    except Exception as e:
+        print(f"Error fetching results for {year}: {e}", file=sys.stderr)
+        return 0, []  # Return 0 and empty list in case of error
+    finally:
+        time.sleep(1)  # Reduced to 1 second as requested
+
+
+def save_results_to_csv(output_dir, filename, years, results):
+    """Saves the results to a CSV file."""
+    filepath = os.path.join(output_dir, filename)
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:  # Added encoding
+            f.write("year,totalResults,authorYear\n")  # Header row
+            for year, (total_results, results_data) in zip(years, results):
+                for author_year in results_data:
+                    f.write(f"{year},{total_results},\"{author_year}\"\n")  # Quote author/year
+        print(f"Results saved to {filepath}")
+    except Exception as e:
+        print(f"Error saving to CSV: {e}", file=sys.stderr)
+
+
+def plot_results(output_dir, keywords, years, results):
+    """Plots the results and saves the plot to a file."""
+    # The plotting part remains the same, but now it only plots total results
+    total_results = [r[0] for r in results]  # Extract total results for plotting
+
+    plt.figure(figsize=(10, 5), dpi=80)
+    plt.style.use("grayscale")
+    plt.grid(True, alpha=0.5)
+    plt.plot(years, total_results, "X-", label="Total Results")  # Combined marker and line
+    plt.title(f'Google Scholar Results for "{ " ".join(keywords) }" ({years[0]}-{years[-1]})')
+    plt.xlabel("Year")
+    plt.ylabel("Number of Results")
+    plt.legend()  # Show the label
+    plt.savefig(os.path.join(output_dir, f"trend_{'_'.join(keywords)}.png"), bbox_inches="tight")  # Use underscore in filename
+    plt.show()
+
+
+def write_search_info(filename, keywords, filter_type):
+    """Writes the search keywords and filter type to a file."""
+    filepath = filename
+    try:
+        with open(filepath, "w") as f:
+            f.write(f"Keywords: {', '.join(keywords)}\n")
+            f.write(f"Filter Type: {filter_type}\n")
+        print(f"Search information written to {filepath}")
+    except Exception as e:
+        print(f"Error writing search information to {filepath}: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
     args = parse_args()
-    keywords = "+".join(args.keywords)
+    keywords = args.keywords  # Keep keywords as a list
+    filter_type = args.filter
 
-    # Prepare http requests
+    # Construct the search query based on the filter type
+    if filter_type == "AND":
+        search_query = "+".join(keywords)  # "AND" is the default behavior in Google Scholar
+    else:  # filter_type == "OR"
+        search_query = " OR ".join(keywords)
+
     years = range(args.since, args.to + 1)
-    base_url = "https://scholar.google.ca/scholar?q=%s&as_ylo=%i&as_yhi=%i"
-    urls = [base_url % (keywords, i, i + 1) for i in years]
-    headers = requests.utils.default_headers()
-    headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
-        }
-    )
 
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-    ]
-    headers.update({"User-Agent": random.choice(user_agents)})
+    # Selenium setup
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(options=chrome_options)
 
-    # Download webpages and parse html
-    reg = re.compile(r".*About ([\d,]+) results.*")
-    result_nbs = []
-    for i, url in enumerate(urls):
-        page = requests.get(url, headers=headers)
-        page_content = page.text  # Get the content as text
-        m = reg.match(page_content)
-        if m is None:
-            print(f"Error while parsing results for year {years[i]}", file=sys.stderr)
-            if "Our systems have detected unusual traffic" in page_content:
-                print("Google is throttling your IP, consider using a proxy/VPN", file=sys.stderr)
-            result_nbs.append(0)  # Append 0 to continue the process
-            continue
-        r = int(m.group(1).replace(",", ""))
-        print("%i: %i" % (years[i], r))
-        result_nbs.append(r)
-        time.sleep(random.uniform(0.5, 2))
+    # Fetch results
+    all_results = [fetch_scholar_results(driver, search_query, year) for year in years]  # Collect all results
 
-    # Save results
-    if args.csv is not None:
-        output_path = os.path.join("D:\\Server\\Scholar trends", args.csv)  # saves to the specified directory
-        with open(output_path, "w") as f:
-            print("year,numberOfResults", file=f)
-            for i, r in enumerate(result_nbs):
-                print("%i,%i" % (years[i], r), file=f)
+    # Clean up Selenium
+    driver.quit()
 
-    # Plot results
+    # Save and plot results
+    if args.csv:
+        save_results_to_csv(args.output_dir, args.csv, years, all_results)  # Pass all_results
     if args.plot:
-        fig = plt.figure(figsize=(10, 5), dpi=80)
-        plt.style.use("grayscale")
-        ax = fig.subplots()
-        ax.grid(True, alpha=0.5)
-        ax.plot(years, result_nbs, "X", years, result_nbs)
-        ax.set_title('Number of results with keywords "%s" using Google Scholar' % " ".join(args.keywords))
-        # plt.xticks(years)
-        plt.savefig(f"trend_{keywords}.png", bbox_inches="tight")
-        plt.show()
+        plot_results(args.output_dir, keywords, years, all_results)  # Pass original keywords for title
+    # Write search information to Cmd.txt
+    write_search_info("Cmd.txt", keywords, filter_type)
