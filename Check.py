@@ -1,3 +1,7 @@
+#Check if Google Scholar is accessible and if titles can be parsed using Selenium and BeautifulSoup
+#                     f.write(f"{year},{total_results},{author_year}\n")  # Write each result in a new line
+# -*- coding: utf-8 -*-
+
 import pkg_resources
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options

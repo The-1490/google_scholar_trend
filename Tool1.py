@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument("--to", type=int, default=datetime.datetime.now().year, help="Ending year")
     parser.add_argument("--plot", action="store_true", help="Plot the results")
     parser.add_argument("--csv", type=str, default="Tungsten.csv", metavar="filename", help="Filename for CSV output")
-    parser.add_argument("--output_dir", type=str, default="D:\\Server\\Scholar trends", help="Directory to save output files")
+    parser.add_argument("--output_dir", type=str, default="*//:path*", help="Directory to save output files")
     parser.add_argument("--filter", type=str, default="AND", choices=["AND", "OR"], help="Filter type for multiple keywords (AND or OR)")
     return parser.parse_args()
 
